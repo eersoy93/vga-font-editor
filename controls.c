@@ -1,9 +1,10 @@
 #include "vga_font_editor.h"
 
-// Character Grid Control
+// Character Grid Control - Modern UI ile güncellendi
 LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static BOOL isDragging = FALSE;
+    static int hoverChar = -1;
     
     switch (uMsg) {
         case WM_PAINT:
@@ -14,15 +15,17 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                 RECT rect;
                 GetClientRect(hwnd, &rect);
                 
-                // Fill background
-                FillRect(hdc, &rect, (HBRUSH)GetStockObject(WHITE_BRUSH));
+                // Modern arka plan rengi
+                HBRUSH bgBrush = CreateSolidBrush(COLOR_MODERN_BG);
+                FillRect(hdc, &rect, bgBrush);
+                DeleteObject(bgBrush);
                 
                 // Calculate cell size
                 int cellWidth = (rect.right - rect.left) / 16;
                 int cellHeight = (rect.bottom - rect.top) / 16;
                 
-                // Draw grid lines
-                HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(200, 200, 200));
+                // Modern grid çizgileri - daha ince ve yumuşak
+                HPEN gridPen = CreatePen(PS_SOLID, 1, COLOR_MODERN_GRID);
                 HPEN oldPen = SelectObject(hdc, gridPen);
                 
                 // Vertical lines
@@ -39,40 +42,62 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                     LineTo(hdc, rect.right, yPos);
                 }
                 
-                // Draw characters
+                // Draw characters with modern styling
                 HFONT font = CreateFont(
-                    min(cellHeight - 4, cellWidth - 4), 0, 0, 0,
+                    min(cellHeight - 6, cellWidth - 6), 0, 0, 0,
                     FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                    CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                    FIXED_PITCH | FF_MODERN, "Courier New"
+                    CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    FIXED_PITCH | FF_MODERN, "Consolas"
                 );
                 HFONT oldFont = SelectObject(hdc, font);
                 
                 SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, RGB(0, 0, 0));
+                SetTextColor(hdc, COLOR_MODERN_TEXT);
                 
                 for (int row = 0; row < 16; row++) {
                     for (int col = 0; col < 16; col++) {
                         int charIndex = row * 16 + col;
                         
-                        // Highlight selected character
-                        if (charIndex == g_selectedChar) {
-                            RECT cellRect = {
-                                col * cellWidth + 1,
-                                row * cellHeight + 1,
-                                (col + 1) * cellWidth - 1,
-                                (row + 1) * cellHeight - 1
-                            };
-                            FillRect(hdc, &cellRect, (HBRUSH)GetStockObject(LTGRAY_BRUSH));
+                        RECT cellRect = {
+                            col * cellWidth + 1,
+                            row * cellHeight + 1,
+                            (col + 1) * cellWidth - 1,
+                            (row + 1) * cellHeight - 1
+                        };
+                        
+                        // Modern hover efekti
+                        if (charIndex == hoverChar && charIndex != g_selectedChar) {
+                            HBRUSH hoverBrush = CreateSolidBrush(COLOR_MODERN_HOVER);
+                            FillRect(hdc, &cellRect, hoverBrush);
+                            DeleteObject(hoverBrush);
                         }
                         
-                        // Draw character using VGA font data
+                        // Modern seçim vurgusu - yumuşak mavi
+                        if (charIndex == g_selectedChar) {
+                            HBRUSH selectedBrush = CreateSolidBrush(COLOR_MODERN_SELECTED);
+                            FillRect(hdc, &cellRect, selectedBrush);
+                            DeleteObject(selectedBrush);
+                            
+                            // Seçim kenarlığı
+                            HPEN borderPen = CreatePen(PS_SOLID, 2, COLOR_MODERN_HIGHLIGHT);
+                            HPEN oldBorderPen = SelectObject(hdc, borderPen);
+                            HBRUSH nullBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+                            HBRUSH oldBrush = SelectObject(hdc, nullBrush);
+                            
+                            Rectangle(hdc, cellRect.left, cellRect.top, cellRect.right, cellRect.bottom);
+                            
+                            SelectObject(hdc, oldBrush);
+                            SelectObject(hdc, oldBorderPen);
+                            DeleteObject(borderPen);
+                        }
+                        
+                        // Draw character using VGA font data with better positioning
                         DrawVGACharacter(hdc, 
-                                       col * cellWidth + 2, 
-                                       row * cellHeight + 2,
-                                       cellWidth - 4, 
-                                       cellHeight - 4,
+                                       col * cellWidth + 3, 
+                                       row * cellHeight + 3,
+                                       cellWidth - 6, 
+                                       cellHeight - 6,
                                        &g_font, charIndex);
                     }
                 }
@@ -83,6 +108,53 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                 DeleteObject(gridPen);
                 
                 EndPaint(hwnd, &ps);
+            }
+            break;
+            
+        case WM_MOUSEMOVE:
+            {
+                RECT rect;
+                GetClientRect(hwnd, &rect);
+                
+                int cellWidth = (rect.right - rect.left) / 16;
+                int cellHeight = (rect.bottom - rect.top) / 16;
+                
+                int x = LOWORD(lParam);
+                int y = HIWORD(lParam);
+                
+                int col = x / cellWidth;
+                int row = y / cellHeight;
+                
+                int newHover = -1;
+                if (col >= 0 && col < 16 && row >= 0 && row < 16) {
+                    newHover = row * 16 + col;
+                }
+                
+                if (newHover != hoverChar) {
+                    hoverChar = newHover;
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+                
+                if (isDragging && (wParam & MK_LBUTTON)) {
+                    // Handle dragging to select different characters
+                    if (col >= 0 && col < 16 && row >= 0 && row < 16) {
+                        int newSelected = row * 16 + col;
+                        if (newSelected != g_selectedChar) {
+                            g_selectedChar = newSelected;
+                            UpdateCharacterInfo();
+                            UpdateStatusBar();
+                            InvalidateRect(hwnd, NULL, FALSE);
+                            InvalidateRect(g_hPixelEditor, NULL, FALSE);
+                        }
+                    }
+                }
+            }
+            break;
+            
+        case WM_MOUSELEAVE:
+            if (hoverChar != -1) {
+                hoverChar = -1;
+                InvalidateRect(hwnd, NULL, FALSE);
             }
             break;
             
@@ -105,6 +177,7 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                     if (newSelected != g_selectedChar) {
                         g_selectedChar = newSelected;
                         UpdateCharacterInfo();
+                        UpdateStatusBar();
                         InvalidateRect(hwnd, NULL, FALSE);
                         InvalidateRect(g_hPixelEditor, NULL, FALSE);
                     }
@@ -112,33 +185,13 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                 
                 SetCapture(hwnd);
                 isDragging = TRUE;
-            }
-            break;
-            
-        case WM_MOUSEMOVE:
-            if (isDragging && (wParam & MK_LBUTTON)) {
-                // Handle dragging to select different characters
-                RECT rect;
-                GetClientRect(hwnd, &rect);
                 
-                int cellWidth = (rect.right - rect.left) / 16;
-                int cellHeight = (rect.bottom - rect.top) / 16;
-                
-                int x = LOWORD(lParam);
-                int y = HIWORD(lParam);
-                
-                int col = x / cellWidth;
-                int row = y / cellHeight;
-                
-                if (col >= 0 && col < 16 && row >= 0 && row < 16) {
-                    int newSelected = row * 16 + col;
-                    if (newSelected != g_selectedChar) {
-                        g_selectedChar = newSelected;
-                        UpdateCharacterInfo();
-                        InvalidateRect(hwnd, NULL, FALSE);
-                        InvalidateRect(g_hPixelEditor, NULL, FALSE);
-                    }
-                }
+                // Mouse tracking için
+                TRACKMOUSEEVENT tme;
+                tme.cbSize = sizeof(tme);
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                TrackMouseEvent(&tme);
             }
             break;
             
@@ -155,11 +208,12 @@ LRESULT CALLBACK CharGridProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     return 0;
 }
 
-// Pixel Editor Control
+// Pixel Editor Control - Modern UI ile güncellendi
 LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static BOOL isDragging = FALSE;
     static BOOL drawMode = TRUE; // TRUE = set pixels, FALSE = clear pixels
+    static int hoverX = -1, hoverY = -1;
     
     switch (uMsg) {
         case WM_PAINT:
@@ -170,15 +224,19 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 RECT rect;
                 GetClientRect(hwnd, &rect);
                 
-                // Fill background
-                FillRect(hdc, &rect, (HBRUSH)GetStockObject(WHITE_BRUSH));
+                // Modern arka plan
+                HBRUSH bgBrush = CreateSolidBrush(COLOR_MODERN_WHITE);
+                FillRect(hdc, &rect, bgBrush);
+                DeleteObject(bgBrush);
                 
-                // Calculate pixel size
-                int pixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
-                int pixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                // Calculate pixel size with zoom support
+                int basePixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
+                int basePixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int pixelWidth = (basePixelWidth * g_zoomLevel) / 2;
+                int pixelHeight = (basePixelHeight * g_zoomLevel) / 2;
                 
-                // Draw grid lines
-                HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(150, 150, 150));
+                // Modern grid çizgileri - daha ince
+                HPEN gridPen = CreatePen(PS_SOLID, 1, COLOR_MODERN_BORDER);
                 HPEN oldPen = SelectObject(hdc, gridPen);
                 
                 // Vertical lines
@@ -195,19 +253,28 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                     LineTo(hdc, rect.right, yPos);
                 }
                 
-                // Draw pixels
-                HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
-                
+                // Draw pixels with modern styling
                 for (int y = 0; y < VGA_CHAR_HEIGHT; y++) {
                     for (int x = 0; x < VGA_CHAR_WIDTH; x++) {
+                        RECT pixelRect = {
+                            x * pixelWidth + 1,
+                            y * pixelHeight + 1,
+                            (x + 1) * pixelWidth - 1,
+                            (y + 1) * pixelHeight - 1
+                        };
+                        
+                        // Hover efekti
+                        if (x == hoverX && y == hoverY) {
+                            HBRUSH hoverBrush = CreateSolidBrush(COLOR_MODERN_HOVER);
+                            FillRect(hdc, &pixelRect, hoverBrush);
+                            DeleteObject(hoverBrush);
+                        }
+                        
+                        // Aktif piksel - modern koyu renk
                         if (GetFontPixel(&g_font, g_selectedChar, x, y)) {
-                            RECT pixelRect = {
-                                x * pixelWidth + 1,
-                                y * pixelHeight + 1,
-                                (x + 1) * pixelWidth - 1,
-                                (y + 1) * pixelHeight - 1
-                            };
-                            FillRect(hdc, &pixelRect, blackBrush);
+                            HBRUSH pixelBrush = CreateSolidBrush(COLOR_MODERN_PIXEL);
+                            FillRect(hdc, &pixelRect, pixelBrush);
+                            DeleteObject(pixelBrush);
                         }
                     }
                 }
@@ -219,13 +286,60 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
             }
             break;
             
+        case WM_MOUSEMOVE:
+            {
+                RECT rect;
+                GetClientRect(hwnd, &rect);
+                
+                int basePixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
+                int basePixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int pixelWidth = (basePixelWidth * g_zoomLevel) / 2;
+                int pixelHeight = (basePixelHeight * g_zoomLevel) / 2;
+                
+                int x = LOWORD(lParam) / pixelWidth;
+                int y = HIWORD(lParam) / pixelHeight;
+                
+                int newHoverX = -1, newHoverY = -1;
+                if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
+                    newHoverX = x;
+                    newHoverY = y;
+                }
+                
+                if (newHoverX != hoverX || newHoverY != hoverY) {
+                    hoverX = newHoverX;
+                    hoverY = newHoverY;
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+                
+                if (isDragging && ((wParam & MK_LBUTTON) || (wParam & MK_RBUTTON))) {
+                    if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
+                        BOOL currentPixel = GetFontPixel(&g_font, g_selectedChar, x, y);
+                        if (currentPixel != drawMode) {
+                            SetFontPixel(&g_font, g_selectedChar, x, y, drawMode);
+                            InvalidateRect(hwnd, NULL, FALSE);
+                            InvalidateRect(g_hCharGrid, NULL, FALSE);
+                        }
+                    }
+                }
+            }
+            break;
+            
+        case WM_MOUSELEAVE:
+            if (hoverX != -1 || hoverY != -1) {
+                hoverX = hoverY = -1;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            break;
+            
         case WM_LBUTTONDOWN:
             {
                 RECT rect;
                 GetClientRect(hwnd, &rect);
                 
-                int pixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
-                int pixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int basePixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
+                int basePixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int pixelWidth = (basePixelWidth * g_zoomLevel) / 2;
+                int pixelHeight = (basePixelHeight * g_zoomLevel) / 2;
                 
                 int x = LOWORD(lParam) / pixelWidth;
                 int y = HIWORD(lParam) / pixelHeight;
@@ -239,6 +353,13 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 
                 SetCapture(hwnd);
                 isDragging = TRUE;
+                
+                // Mouse tracking
+                TRACKMOUSEEVENT tme;
+                tme.cbSize = sizeof(tme);
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                TrackMouseEvent(&tme);
             }
             break;
             
@@ -247,8 +368,10 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 RECT rect;
                 GetClientRect(hwnd, &rect);
                 
-                int pixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
-                int pixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int basePixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
+                int basePixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
+                int pixelWidth = (basePixelWidth * g_zoomLevel) / 2;
+                int pixelHeight = (basePixelHeight * g_zoomLevel) / 2;
                 
                 int x = LOWORD(lParam) / pixelWidth;
                 int y = HIWORD(lParam) / pixelHeight;
@@ -262,28 +385,6 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 
                 SetCapture(hwnd);
                 isDragging = TRUE;
-            }
-            break;
-            
-        case WM_MOUSEMOVE:
-            if (isDragging && ((wParam & MK_LBUTTON) || (wParam & MK_RBUTTON))) {
-                RECT rect;
-                GetClientRect(hwnd, &rect);
-                
-                int pixelWidth = (rect.right - rect.left) / VGA_CHAR_WIDTH;
-                int pixelHeight = (rect.bottom - rect.top) / VGA_CHAR_HEIGHT;
-                
-                int x = LOWORD(lParam) / pixelWidth;
-                int y = HIWORD(lParam) / pixelHeight;
-                
-                if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
-                    BOOL currentPixel = GetFontPixel(&g_font, g_selectedChar, x, y);
-                    if (currentPixel != drawMode) {
-                        SetFontPixel(&g_font, g_selectedChar, x, y, drawMode);
-                        InvalidateRect(hwnd, NULL, FALSE);
-                        InvalidateRect(g_hCharGrid, NULL, FALSE);
-                    }
-                }
             }
             break;
             

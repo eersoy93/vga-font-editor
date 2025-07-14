@@ -4,7 +4,7 @@ CC = gcc
 WINDRES = windres
 CFLAGS = -Wall -Wextra -std=c99 -O2
 LDFLAGS = -mwindows
-LIBS = -lgdi32 -luser32 -lkernel32 -lcomdlg32
+LIBS = -lgdi32 -luser32 -lkernel32 -lcomdlg32 -lcomctl32 -luxtheme -ldwmapi
 
 TARGET = vga-font-editor.exe
 SOURCES = main.c font_manager.c controls.c

@@ -1,5 +1,8 @@
 #include "vga_font_editor.h"
 
+// Application Manifest for Visual Styles support
+1 RT_MANIFEST "vga_font_editor.manifest"
+
 IDR_MENU MENU
 {
     POPUP "&File"
@@ -7,10 +10,20 @@ IDR_MENU MENU
         MENUITEM "&Open Font...\tCtrl+O", ID_FILE_OPEN
         MENUITEM "&Save Font...\tCtrl+S", ID_FILE_SAVE
         MENUITEM SEPARATOR
-        MENUITEM "E&xit", ID_FILE_EXIT
+        MENUITEM "E&xit\tAlt+F4", ID_FILE_EXIT
+    }
+    POPUP "&Edit"
+    {
+        MENUITEM "&Copy Character\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "&Paste Character\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM SEPARATOR
+        MENUITEM "C&lear Character\tDel", ID_EDIT_CLEAR
+        MENUITEM SEPARATOR
+        MENUITEM "&Undo\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM "&Redo\tCtrl+Y", ID_EDIT_REDO
     }
     POPUP "&Help"
     {
-        MENUITEM "&About VGA Font Editor...", ID_HELP_ABOUT
+        MENUITEM "&About VGA Font Editor...\tF1", ID_HELP_ABOUT
     }
 }
