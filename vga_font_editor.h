@@ -88,11 +88,19 @@ extern int g_zoomLevel;
 
 // Function prototypes
 
-// Font management
+// Font management functions
 void InitializeVGAFont(VGAFont* font);
 void LoadBasicASCIIChars(VGAFont* font);
 BOOL LoadVGAFont(VGAFont* font, const char* filename);
 BOOL SaveVGAFont(VGAFont* font, const char* filename);
+BOOL SaveVGAFontRaw(VGAFont* font, const char* filename);
+
+// Enhanced file format support
+const char* GetFontFormatName(const char* filename);
+BOOL ValidateFontFile(const char* filename);
+long GetFontFileSize(const char* filename);
+BOOL ExportToC(VGAFont* font, const char* filename, const char* arrayName);
+BOOL ExportToBitmap(VGAFont* font, const char* filename, int scale);
 
 // Character manipulation
 void SetFontPixel(VGAFont* font, int charIndex, int x, int y, BOOL value);

@@ -56,3 +56,6 @@ dkms.conf
 
 # Project specific
 vga-font-editor.exe
+*.bin
+*.fnt
+*.vgaf

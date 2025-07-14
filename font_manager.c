@@ -1262,15 +1262,55 @@ BOOL LoadVGAFont(VGAFont* font, const char* filename)
     FILE* file = fopen(filename, "rb");
     if (!file) return FALSE;
     
+    // Check file size first
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    // Expected size for VGA font (256 characters * 16 bytes each)
+    const long expectedSize = VGA_FONT_CHARS * VGA_CHAR_HEIGHT;
+    
+    // Check if file has a header (some font formats include metadata)
+    char header[16];
+    
+    if (fileSize >= 16) {
+        // Read potential header
+        fread(header, 1, 16, file);
+        
+        // Check for our VGAF format
+        if (header[0] == 'V' && header[1] == 'G' && 
+            header[2] == 'A' && header[3] == 'F') {
+            // Our VGAF format - header is already consumed, continue reading from current position
+        }
+        // Check for PSF (PC Screen Font) header
+        else if (header[0] == 0x36 && header[1] == 0x04) {
+            // PSF1 format
+            fseek(file, 4, SEEK_SET); // Skip header
+        }
+        else if ((unsigned char)header[0] == 0x72 && (unsigned char)header[1] == 0xb5 && 
+                 (unsigned char)header[2] == 0x4a && (unsigned char)header[3] == 0x86) {
+            // PSF2 format
+            fseek(file, 32, SEEK_SET); // Skip PSF2 header
+        }
+        else {
+            // Unknown header or raw data, assume raw
+            fseek(file, 0, SEEK_SET);
+        }
+    }
+    
+    // Clear font data first
+    memset(font->data, 0, sizeof(font->data));
+    
     // Try to read the font data
-    size_t bytesRead = fread(font->data, 1, sizeof(font->data), file);
+    size_t bytesRead = fread(font->data, 1, expectedSize, file);
     fclose(file);
     
-    // Check if we read the expected amount of data
-    if (bytesRead != sizeof(font->data)) {
-        // If the file is smaller, it might be a different format
-        // For now, just check if we got at least some data
-        if (bytesRead < VGA_FONT_CHARS * VGA_CHAR_HEIGHT) {
+    // Validate the data
+    if (bytesRead < expectedSize) {
+        // If file is smaller, pad remaining characters with zeros
+        // This allows loading partial font files
+        if (bytesRead < (32 * VGA_CHAR_HEIGHT)) {
+            // Too small to be useful
             return FALSE;
         }
     }
@@ -1285,7 +1325,43 @@ BOOL SaveVGAFont(VGAFont* font, const char* filename)
     FILE* file = fopen(filename, "wb");
     if (!file) return FALSE;
     
+    // Create a simple header for our font format
+    // This makes the file format more identifiable
+    char header[16] = {
+        'V', 'G', 'A', 'F',  // Magic signature "VGAF"
+        0x01, 0x00,          // Version 1.0
+        0x00, 0x01,          // Character width: 8 (0x0100 = 256, but we want 8)
+        0x10, 0x00,          // Character height: 16 (0x0010)
+        0x00, 0x01,          // Number of characters: 256 (0x0100)
+        0x00, 0x00, 0x00, 0x00  // Reserved for future use
+    };
+    
+    // Fix the width field (little endian)
+    header[6] = 0x08;  // Width = 8
+    header[7] = 0x00;
+    
+    // Write header first
+    size_t headerWritten = fwrite(header, 1, sizeof(header), file);
+    if (headerWritten != sizeof(header)) {
+        fclose(file);
+        return FALSE;
+    }
+    
     // Write the font data
+    size_t bytesWritten = fwrite(font->data, 1, sizeof(font->data), file);
+    fclose(file);
+    
+    return (bytesWritten == sizeof(font->data));
+}
+
+BOOL SaveVGAFontRaw(VGAFont* font, const char* filename)
+{
+    if (!font || !filename) return FALSE;
+    
+    FILE* file = fopen(filename, "wb");
+    if (!file) return FALSE;
+    
+    // Write only the raw font data (no header)
     size_t bytesWritten = fwrite(font->data, 1, sizeof(font->data), file);
     fclose(file);
     
@@ -1332,12 +1408,147 @@ void CopyCharacter(VGAFont* font, int srcChar, int dstChar)
 
 void InvalidateCharacter(int charIndex)
 {
-    // Redraw the character grid and pixel editor if the changed character is currently selected
+    // Trigger redraws for the character in both grid and editor
     if (g_hCharGrid) {
         InvalidateRect(g_hCharGrid, NULL, FALSE);
     }
-    
-    if (charIndex == g_selectedChar && g_hPixelEditor) {
+    if (g_hPixelEditor && charIndex == g_selectedChar) {
         InvalidateRect(g_hPixelEditor, NULL, FALSE);
     }
+}
+
+// Enhanced file format support functions
+const char* GetFontFormatName(const char* filename)
+{
+    if (!filename) return "Unknown";
+    
+    FILE* file = fopen(filename, "rb");
+    if (!file) return "File not found";
+    
+    // Get file size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    char header[16];
+    size_t read = fread(header, 1, 16, file);
+    fclose(file);
+    
+    if (read < 4) return "Too small";
+    
+    // Check for our VGAF format
+    if (header[0] == 'V' && header[1] == 'G' && 
+        header[2] == 'A' && header[3] == 'F') {
+        return "VGAF (VGA Font Editor)";
+    }
+    // Check for PSF formats
+    else if (header[0] == 0x36 && header[1] == 0x04) {
+        return "PSF1 (PC Screen Font v1)";
+    }
+    else if (read >= 4 && (unsigned char)header[0] == 0x72 && (unsigned char)header[1] == 0xb5 && 
+             (unsigned char)header[2] == 0x4a && (unsigned char)header[3] == 0x86) {
+        return "PSF2 (PC Screen Font v2)";
+    }
+    // Check if it's exactly VGA font size (raw binary)
+    else if (fileSize == 4096) {
+        return "Raw VGA Font (4096 bytes)";
+    }
+    // Check file extension
+    else {
+        const char* ext = strrchr(filename, '.');
+        if (ext) {
+            if (strcmp(ext, ".fnt") == 0) {
+                return "Legacy VGA Font (.fnt)";
+            }
+            else if (strcmp(ext, ".bin") == 0) {
+                return "Binary Font Data (.bin)";
+            }
+            else if (strcmp(ext, ".psf") == 0) {
+                return "PC Screen Font (.psf)";
+            }
+        }
+        return "Unknown binary data";
+    }
+}
+
+BOOL ExportToC(VGAFont* font, const char* filename, const char* arrayName)
+{
+    if (!font || !filename || !arrayName) return FALSE;
+    
+    FILE* file = fopen(filename, "w");
+    if (!file) return FALSE;
+    
+    // Write C header
+    fprintf(file, "// VGA Font Data exported from VGA Font Editor\n");
+    fprintf(file, "// Total characters: %d, Character size: %dx%d pixels\n\n", 
+            VGA_FONT_CHARS, VGA_CHAR_WIDTH, VGA_CHAR_HEIGHT);
+    
+    fprintf(file, "#ifndef VGA_FONT_DATA_H\n");
+    fprintf(file, "#define VGA_FONT_DATA_H\n\n");
+    
+    fprintf(file, "static const unsigned char %s[%d][%d] = {\n", 
+            arrayName, VGA_FONT_CHARS, VGA_CHAR_HEIGHT);
+    
+    for (int i = 0; i < VGA_FONT_CHARS; i++) {
+        fprintf(file, "    { // Character %d (0x%02X) '%c'\n        ", 
+                i, i, (i >= 32 && i <= 126) ? i : '?');
+        
+        for (int j = 0; j < VGA_CHAR_HEIGHT; j++) {
+            fprintf(file, "0x%02X", font->data[i][j]);
+            if (j < VGA_CHAR_HEIGHT - 1) {
+                fprintf(file, ", ");
+                if ((j + 1) % 8 == 0) fprintf(file, "\n        ");
+            }
+        }
+        fprintf(file, "\n    }");
+        if (i < VGA_FONT_CHARS - 1) fprintf(file, ",");
+        fprintf(file, "\n");
+    }
+    
+    fprintf(file, "};\n\n");
+    fprintf(file, "#endif // VGA_FONT_DATA_H\n");
+    
+    fclose(file);
+    return TRUE;
+}
+
+BOOL ExportToBitmap(VGAFont* font, const char* filename, int scale)
+{
+    // This would require more complex bitmap file format handling
+    // For now, just return FALSE as placeholder
+    (void)font; (void)filename; (void)scale;
+    return FALSE;
+}
+
+long GetFontFileSize(const char* filename)
+{
+    if (!filename) return -1;
+    
+    FILE* file = fopen(filename, "rb");
+    if (!file) return -1;
+    
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fclose(file);
+    
+    return size;
+}
+
+BOOL ValidateFontFile(const char* filename)
+{
+    if (!filename) return FALSE;
+    
+    long size = GetFontFileSize(filename);
+    if (size < 0) return FALSE;
+    
+    // Must be at least 32 characters worth of data
+    if (size < (32 * VGA_CHAR_HEIGHT)) return FALSE;
+    
+    // Check if it's a reasonable size for a font file
+    if (size > (VGA_FONT_CHARS * VGA_CHAR_HEIGHT + 1024)) {
+        // Too large, might not be a font file
+        return FALSE;
+    }
+    
+    return TRUE;
 }

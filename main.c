@@ -124,17 +124,58 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                         ofn.hwndOwner = hwnd;
                         ofn.lpstrFile = filename;
                         ofn.nMaxFile = sizeof(filename);
-                        ofn.lpstrFilter = "VGA Font Files\0*.fnt\0All Files\0*.*\0";
+                        ofn.lpstrFilter = 
+                            "VGA Font Files (*.fnt)\0*.fnt\0"
+                            "VGAF Files (*.vgaf)\0*.vgaf\0"
+                            "PSF Font Files (*.psf)\0*.psf\0"
+                            "Raw Binary (*.bin)\0*.bin\0"
+                            "All Files (*.*)\0*.*\0";
                         ofn.nFilterIndex = 1;
                         ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+                        ofn.lpstrTitle = "Open Font File";
                         
                         if (GetOpenFileName(&ofn)) {
+                            // First validate the file
+                            if (!ValidateFontFile(filename)) {
+                                char msg[512];
+                                sprintf(msg, "Invalid font file format:\n\n"
+                                           "File: %s\n"
+                                           "Size: %ld bytes\n"
+                                           "Format: %s\n\n"
+                                           "Expected: VGA font data (4096 bytes minimum)",
+                                           filename, GetFontFileSize(filename), 
+                                           GetFontFormatName(filename));
+                                MessageBox(hwnd, msg, "Invalid Font File", MB_OK | MB_ICONWARNING);
+                                break;
+                            }
+                            
                             if (LoadVGAFont(&g_font, filename)) {
+                                char msg[512];
+                                sprintf(msg, "Font loaded successfully!\n\n"
+                                           "File: %s\n"
+                                           "Size: %ld bytes\n"
+                                           "Format: %s",
+                                           filename, GetFontFileSize(filename), 
+                                           GetFontFormatName(filename));
+                                
                                 InvalidateRect(g_hCharGrid, NULL, TRUE);
                                 InvalidateRect(g_hPixelEditor, NULL, TRUE);
                                 UpdateStatusBar();
+                                
+                                // Show format info in status bar
+                                if (g_hStatusBar) {
+                                    SendMessage(g_hStatusBar, SB_SETTEXT, 3, (LPARAM)GetFontFormatName(filename));
+                                }
+                                
+                                MessageBox(hwnd, msg, "Font Loaded", MB_OK | MB_ICONINFORMATION);
                             } else {
-                                MessageBox(hwnd, "Failed to load font file", "Error", MB_OK | MB_ICONERROR);
+                                char msg[512];
+                                sprintf(msg, "Failed to load font file:\n\n"
+                                           "File: %s\n"
+                                           "Format: %s\n\n"
+                                           "The file may be corrupted or in an unsupported format.",
+                                           filename, GetFontFormatName(filename));
+                                MessageBox(hwnd, msg, "Load Error", MB_OK | MB_ICONERROR);
                             }
                         }
                     }
@@ -150,13 +191,63 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                         ofn.hwndOwner = hwnd;
                         ofn.lpstrFile = filename;
                         ofn.nMaxFile = sizeof(filename);
-                        ofn.lpstrFilter = "VGA Font Files\0*.fnt\0All Files\0*.*\0";
+                        ofn.lpstrFilter = 
+                            "VGAF Files (*.vgaf)\0*.vgaf\0"
+                            "VGA Font Files (*.fnt)\0*.fnt\0"
+                            "Raw Binary (*.bin)\0*.bin\0"
+                            "C Header (*.h)\0*.h\0";
                         ofn.nFilterIndex = 1;
                         ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+                        ofn.lpstrTitle = "Save Font File";
+                        ofn.lpstrDefExt = "vgaf";
                         
                         if (GetSaveFileName(&ofn)) {
-                            if (!SaveVGAFont(&g_font, filename)) {
-                                MessageBox(hwnd, "Failed to save font file", "Error", MB_OK | MB_ICONERROR);
+                            BOOL success = FALSE;
+                            
+                            // Check if saving as C header
+                            char* ext = strrchr(filename, '.');
+                            if (ext && strcmp(ext, ".h") == 0) {
+                                // Export as C header
+                                success = ExportToC(&g_font, filename, "vga_font_data");
+                                if (success) {
+                                    MessageBox(hwnd, 
+                                        "Font exported as C header file successfully!\n\n"
+                                        "You can now include this file in your C/C++ projects.",
+                                        "Export Complete", MB_OK | MB_ICONINFORMATION);
+                                } else {
+                                    MessageBox(hwnd, "Failed to export C header file", "Export Error", MB_OK | MB_ICONERROR);
+                                }
+                            } else {
+                                // Determine format based on extension and filter selection
+                                char* ext = strrchr(filename, '.');
+                                const char* formatName = "Unknown";
+                                
+                                if (ext && (strcmp(ext, ".fnt") == 0 || strcmp(ext, ".bin") == 0)) {
+                                    // Save as raw binary (no header)
+                                    success = SaveVGAFontRaw(&g_font, filename);
+                                    formatName = "Raw Binary";
+                                } else {
+                                    // Save as VGAF format (with header)
+                                    success = SaveVGAFont(&g_font, filename);
+                                    formatName = "VGAF (VGA Font Editor)";
+                                }
+                                
+                                if (success) {
+                                    char msg[512];
+                                    sprintf(msg, "Font saved successfully!\n\n"
+                                               "File: %s\n"
+                                               "Size: %ld bytes\n"
+                                               "Format: %s",
+                                               filename, GetFontFileSize(filename), formatName);
+                                    MessageBox(hwnd, msg, "Save Complete", MB_OK | MB_ICONINFORMATION);
+                                    
+                                    // Update status bar
+                                    if (g_hStatusBar) {
+                                        SendMessage(g_hStatusBar, SB_SETTEXT, 3, (LPARAM)"Font saved");
+                                    }
+                                } else {
+                                    MessageBox(hwnd, "Failed to save font file", "Save Error", MB_OK | MB_ICONERROR);
+                                }
                             }
                         }
                     }
