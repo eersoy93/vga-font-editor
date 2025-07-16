@@ -1047,10 +1047,10 @@ void UpdateWindowTitle()
         } else {
             nameOnly = g_currentFilename;
         }
-        sprintf(title, "%s%s - VGA Font Editor - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
+        sprintf(title, "%s%s - VGA Font Editor 0.1.0 - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
                 nameOnly, g_fontModified ? "*" : "");
     } else {
-        sprintf(title, "%sUntitled - VGA Font Editor - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
+        sprintf(title, "%sUntitled - VGA Font Editor 0.1.0 - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
                 g_fontModified ? "*" : "");
     }
     SetWindowText(g_hMainWindow, title);
