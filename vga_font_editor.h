@@ -76,6 +76,30 @@ typedef struct {
     BOOL hasData;
 } CharClipboard;
 
+// Undo/Redo system
+#define MAX_UNDO_LEVELS 20
+
+typedef enum {
+    ACTION_PIXEL_CHANGE,
+    ACTION_CHARACTER_CLEAR,
+    ACTION_CHARACTER_PASTE
+} UndoActionType;
+
+typedef struct {
+    UndoActionType type;
+    int charIndex;
+    unsigned char oldData[VGA_CHAR_HEIGHT];
+    unsigned char newData[VGA_CHAR_HEIGHT];
+    int pixelX, pixelY; // For pixel changes
+    BOOL oldPixelValue, newPixelValue; // For pixel changes
+} UndoAction;
+
+typedef struct {
+    UndoAction actions[MAX_UNDO_LEVELS];
+    int currentIndex;
+    int actionCount;
+} UndoSystem;
+
 // Global variables (declared in main.c)
 extern HINSTANCE g_hInstance;
 extern HWND g_hMainWindow;
@@ -85,6 +109,9 @@ extern HWND g_hCharGrid, g_hPixelEditor, g_hCharInfo;
 extern HWND g_hStatusBar, g_hToolbar;
 extern CharClipboard g_clipboard;
 extern int g_zoomLevel;
+extern UndoSystem g_undoSystem;
+extern BOOL g_fontModified;
+extern char g_currentFilename[MAX_PATH];
 
 // Function prototypes
 
@@ -111,6 +138,22 @@ void CopyCharacter(VGAFont* font, int srcChar, int dstChar);
 // Clipboard operations
 void CopyCharacterToClipboard(int charIndex);
 void PasteCharacterFromClipboard(int charIndex);
+
+// Undo/Redo operations
+void InitializeUndoSystem();
+void AddUndoAction(UndoActionType type, int charIndex, int pixelX, int pixelY, BOOL oldValue, BOOL newValue);
+void AddUndoActionCharacter(UndoActionType type, int charIndex, unsigned char* oldData, unsigned char* newData);
+BOOL CanUndo();
+BOOL CanRedo();
+void PerformUndo();
+void PerformRedo();
+void UpdateUndoRedoButtons();
+
+// File change tracking
+void SetFontModified(BOOL modified);
+BOOL IsFontModified();
+BOOL PromptSaveChanges();
+void UpdateWindowTitle();
 
 // UI functions
 void UpdateCharacterInfo();

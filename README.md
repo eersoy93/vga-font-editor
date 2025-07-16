@@ -7,7 +7,7 @@ A simple VGA text mode font editor for Windows, written in C using Windows API.
 - Edit 8x16 pixel VGA fonts (256 characters)
 - Visual character grid showing all 256 characters
 - Pixel-level character editor
-- Load and save VGA font files (.fnt format)
+- Load and save VGA font files (.vgaf format)
 - Mouse and keyboard support for pixel editing
 - Character selection and navigation
 
@@ -58,14 +58,17 @@ gcc -mwindows -o vga-font-editor.exe main.o font_manager.o controls.o resource.o
 4. **File Operations**:
    - Use File → Open to load existing VGA font files
    - Use File → Save to save your edited font
-   - Font files are saved in raw binary format (.fnt)
+   - Font files are saved in VGAF format (.vgaf)
 
 ## File Format
 
-The editor uses a simple binary format:
-- 256 characters × 16 bytes per character = 4096 bytes total
+The editor uses the VGAF (VGA Font) format:
+- 16-byte header with format identification and metadata
+- 256 characters × 16 bytes per character = 4096 bytes font data
+- Total file size: 4112 bytes
 - Each character is 8 pixels wide × 16 pixels tall
 - Each byte represents one row of pixels (MSB = leftmost pixel)
+- Header contains version info, character dimensions, and format validation
 
 ## Character Set
 

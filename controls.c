@@ -315,6 +315,8 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                     if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
                         BOOL currentPixel = GetFontPixel(&g_font, g_selectedChar, x, y);
                         if (currentPixel != drawMode) {
+                            // Add undo action for pixel change during drag
+                            AddUndoAction(ACTION_PIXEL_CHANGE, g_selectedChar, x, y, currentPixel, drawMode);
                             SetFontPixel(&g_font, g_selectedChar, x, y, drawMode);
                             InvalidateRect(hwnd, NULL, FALSE);
                             InvalidateRect(g_hCharGrid, NULL, FALSE);
@@ -345,10 +347,15 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 int y = HIWORD(lParam) / pixelHeight;
                 
                 if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
+                    BOOL oldValue = GetFontPixel(&g_font, g_selectedChar, x, y);
                     drawMode = TRUE;
-                    SetFontPixel(&g_font, g_selectedChar, x, y, TRUE);
-                    InvalidateRect(hwnd, NULL, FALSE);
-                    InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    if (oldValue != TRUE) {
+                        // Add undo action for pixel change
+                        AddUndoAction(ACTION_PIXEL_CHANGE, g_selectedChar, x, y, oldValue, TRUE);
+                        SetFontPixel(&g_font, g_selectedChar, x, y, TRUE);
+                        InvalidateRect(hwnd, NULL, FALSE);
+                        InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    }
                 }
                 
                 SetCapture(hwnd);
@@ -377,10 +384,15 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
                 int y = HIWORD(lParam) / pixelHeight;
                 
                 if (x >= 0 && x < VGA_CHAR_WIDTH && y >= 0 && y < VGA_CHAR_HEIGHT) {
+                    BOOL oldValue = GetFontPixel(&g_font, g_selectedChar, x, y);
                     drawMode = FALSE;
-                    SetFontPixel(&g_font, g_selectedChar, x, y, FALSE);
-                    InvalidateRect(hwnd, NULL, FALSE);
-                    InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    if (oldValue != FALSE) {
+                        // Add undo action for pixel change
+                        AddUndoAction(ACTION_PIXEL_CHANGE, g_selectedChar, x, y, oldValue, FALSE);
+                        SetFontPixel(&g_font, g_selectedChar, x, y, FALSE);
+                        InvalidateRect(hwnd, NULL, FALSE);
+                        InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    }
                 }
                 
                 SetCapture(hwnd);
@@ -400,10 +412,22 @@ LRESULT CALLBACK PixelEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
             switch (wParam) {
                 case VK_DELETE:
                 case VK_BACK:
-                    // Clear the current character
-                    ClearCharacter(&g_font, g_selectedChar);
-                    InvalidateRect(hwnd, NULL, FALSE);
-                    InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    {
+                        // Store old data for undo
+                        unsigned char oldData[VGA_CHAR_HEIGHT];
+                        unsigned char newData[VGA_CHAR_HEIGHT];
+                        memcpy(oldData, g_font.data[g_selectedChar], VGA_CHAR_HEIGHT);
+                        
+                        // Clear the current character
+                        ClearCharacter(&g_font, g_selectedChar);
+                        memcpy(newData, g_font.data[g_selectedChar], VGA_CHAR_HEIGHT);
+                        
+                        // Add to undo system
+                        AddUndoActionCharacter(ACTION_CHARACTER_CLEAR, g_selectedChar, oldData, newData);
+                        
+                        InvalidateRect(hwnd, NULL, FALSE);
+                        InvalidateRect(g_hCharGrid, NULL, FALSE);
+                    }
                     break;
             }
             break;

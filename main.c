@@ -14,6 +14,9 @@ HWND g_hCharGrid, g_hPixelEditor, g_hCharInfo;
 HWND g_hStatusBar, g_hToolbar;
 CharClipboard g_clipboard = {0};
 int g_zoomLevel = 2; // Start with 2x zoom
+UndoSystem g_undoSystem = {0};
+BOOL g_fontModified = FALSE;
+char g_currentFilename[MAX_PATH] = "";
 
 // UXTHEME global variables
 HTHEME g_hTheme = NULL;
@@ -116,6 +119,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             switch (LOWORD(wParam)) {
                 case ID_FILE_OPEN:
                     {
+                        // Check for unsaved changes before opening new file
+                        if (!PromptSaveChanges()) {
+                            break; // User cancelled
+                        }
+                        
                         OPENFILENAME ofn;
                         char filename[MAX_PATH] = "";
                         
@@ -125,10 +133,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                         ofn.lpstrFile = filename;
                         ofn.nMaxFile = sizeof(filename);
                         ofn.lpstrFilter = 
-                            "VGA Font Files (*.fnt)\0*.fnt\0"
                             "VGAF Files (*.vgaf)\0*.vgaf\0"
-                            "PSF Font Files (*.psf)\0*.psf\0"
-                            "Raw Binary (*.bin)\0*.bin\0"
                             "All Files (*.*)\0*.*\0";
                         ofn.nFilterIndex = 1;
                         ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
@@ -142,7 +147,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                                            "File: %s\n"
                                            "Size: %ld bytes\n"
                                            "Format: %s\n\n"
-                                           "Expected: VGA font data (4096 bytes minimum)",
+                                           "Expected: VGAF format or compatible font data",
                                            filename, GetFontFileSize(filename), 
                                            GetFontFormatName(filename));
                                 MessageBox(hwnd, msg, "Invalid Font File", MB_OK | MB_ICONWARNING);
@@ -150,6 +155,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                             }
                             
                             if (LoadVGAFont(&g_font, filename)) {
+                                // Update current filename and reset modified flag
+                                strcpy(g_currentFilename, filename);
+                                SetFontModified(FALSE);
+                                
+                                // Reset undo system for new file
+                                InitializeUndoSystem();
+                                
                                 char msg[512];
                                 sprintf(msg, "Font loaded successfully!\n\n"
                                            "File: %s\n"
@@ -161,6 +173,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                                 InvalidateRect(g_hCharGrid, NULL, TRUE);
                                 InvalidateRect(g_hPixelEditor, NULL, TRUE);
                                 UpdateStatusBar();
+                                UpdateUndoRedoButtons();
                                 
                                 // Show format info in status bar
                                 if (g_hStatusBar) {
@@ -193,8 +206,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                         ofn.nMaxFile = sizeof(filename);
                         ofn.lpstrFilter = 
                             "VGAF Files (*.vgaf)\0*.vgaf\0"
-                            "VGA Font Files (*.fnt)\0*.fnt\0"
-                            "Raw Binary (*.bin)\0*.bin\0"
                             "C Header (*.h)\0*.h\0";
                         ofn.nFilterIndex = 1;
                         ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
@@ -210,6 +221,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                                 // Export as C header
                                 success = ExportToC(&g_font, filename, "vga_font_data");
                                 if (success) {
+                                    // C export doesn't change the current font file, so don't update filename
+                                    // But we can consider it as "saved" in terms of user intent
                                     MessageBox(hwnd, 
                                         "Font exported as C header file successfully!\n\n"
                                         "You can now include this file in your C/C++ projects.",
@@ -218,21 +231,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                                     MessageBox(hwnd, "Failed to export C header file", "Export Error", MB_OK | MB_ICONERROR);
                                 }
                             } else {
-                                // Determine format based on extension and filter selection
-                                char* ext = strrchr(filename, '.');
-                                const char* formatName = "Unknown";
-                                
-                                if (ext && (strcmp(ext, ".fnt") == 0 || strcmp(ext, ".bin") == 0)) {
-                                    // Save as raw binary (no header)
-                                    success = SaveVGAFontRaw(&g_font, filename);
-                                    formatName = "Raw Binary";
-                                } else {
-                                    // Save as VGAF format (with header)
-                                    success = SaveVGAFont(&g_font, filename);
-                                    formatName = "VGAF (VGA Font Editor)";
-                                }
+                                // Always save as VGAF format
+                                success = SaveVGAFont(&g_font, filename);
+                                const char* formatName = "VGAF (VGA Font Editor)";
                                 
                                 if (success) {
+                                    // Update current filename and reset modified flag
+                                    strcpy(g_currentFilename, filename);
+                                    SetFontModified(FALSE);
+                                    
                                     char msg[512];
                                     sprintf(msg, "Font saved successfully!\n\n"
                                                "File: %s\n"
@@ -254,7 +261,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     break;
                     
                 case ID_FILE_EXIT:
-                    PostQuitMessage(0);
+                    SendMessage(hwnd, WM_CLOSE, 0, 0);
                     break;
                     
                 // Edit menu commands
@@ -271,10 +278,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     break;
                     
                 case ID_EDIT_CLEAR:
-                    ClearCharacter(&g_font, g_selectedChar);
-                    InvalidateRect(g_hCharGrid, NULL, FALSE);
-                    InvalidateRect(g_hPixelEditor, NULL, FALSE);
-                    UpdateStatusBar();
+                    {
+                        // Store old data for undo
+                        unsigned char oldData[VGA_CHAR_HEIGHT];
+                        unsigned char newData[VGA_CHAR_HEIGHT];
+                        memcpy(oldData, g_font.data[g_selectedChar], VGA_CHAR_HEIGHT);
+                        
+                        ClearCharacter(&g_font, g_selectedChar);
+                        memcpy(newData, g_font.data[g_selectedChar], VGA_CHAR_HEIGHT);
+                        
+                        // Add to undo system
+                        AddUndoActionCharacter(ACTION_CHARACTER_CLEAR, g_selectedChar, oldData, newData);
+                        
+                        InvalidateRect(g_hCharGrid, NULL, FALSE);
+                        InvalidateRect(g_hPixelEditor, NULL, FALSE);
+                        UpdateStatusBar();
+                    }
+                    break;
+                    
+                case ID_EDIT_UNDO:
+                    PerformUndo();
+                    break;
+                    
+                case ID_EDIT_REDO:
+                    PerformRedo();
                     break;
                     
                 case ID_HELP_ABOUT:
@@ -466,6 +493,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             InvalidateRect(hwnd, NULL, TRUE);
             break;
             
+        case WM_CLOSE:
+            // Check if there are unsaved changes before closing
+            if (PromptSaveChanges()) {
+                DestroyWindow(hwnd);
+            }
+            // If PromptSaveChanges returns FALSE, don't close
+            break;
+            
         case WM_DESTROY:
             // Clean up theme data
             if (g_hTheme) {
@@ -542,6 +577,7 @@ void CreateControls(HWND hwnd)
     
     UpdateCharacterInfo();
     UpdateStatusBar();
+    UpdateUndoRedoButtons(); // Initialize undo/redo button states
 }
 
 void LoadDefaultFont()
@@ -551,6 +587,13 @@ void LoadDefaultFont()
     
     // Load some basic ASCII characters as examples
     LoadBasicASCIIChars(&g_font);
+    
+    // Initialize undo system
+    InitializeUndoSystem();
+    
+    // Reset file state
+    g_currentFilename[0] = '\0';
+    SetFontModified(FALSE);
 }
 
 void UpdateCharacterInfo()
@@ -595,6 +638,9 @@ void CreateToolbar(HWND hwnd)
         TBBUTTON tbButtons[] = {
             {I_IMAGENONE, ID_FILE_OPEN, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Open"},
             {I_IMAGENONE, ID_FILE_SAVE, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Save"},
+            {I_IMAGENONE, 0, 0, TBSTYLE_SEP, {0}, 0, 0}, // Ayırıcı
+            {I_IMAGENONE, ID_EDIT_UNDO, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Undo"},
+            {I_IMAGENONE, ID_EDIT_REDO, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Redo"},
             {I_IMAGENONE, 0, 0, TBSTYLE_SEP, {0}, 0, 0}, // Ayırıcı
             {I_IMAGENONE, ID_EDIT_COPY, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Copy"},
             {I_IMAGENONE, ID_EDIT_PASTE, TBSTATE_ENABLED, TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE, {0}, 0, (INT_PTR)"Paste"},
@@ -662,9 +708,19 @@ void CopyCharacterToClipboard(int charIndex)
 void PasteCharacterFromClipboard(int charIndex)
 {
     if (g_clipboard.hasData && charIndex >= 0 && charIndex < VGA_FONT_CHARS) {
+        // Store old data for undo
+        unsigned char oldData[VGA_CHAR_HEIGHT];
+        unsigned char newData[VGA_CHAR_HEIGHT];
+        memcpy(oldData, g_font.data[charIndex], VGA_CHAR_HEIGHT);
+        
         for (int i = 0; i < VGA_CHAR_HEIGHT; i++) {
             g_font.data[charIndex][i] = g_clipboard.data[i];
         }
+        
+        memcpy(newData, g_font.data[charIndex], VGA_CHAR_HEIGHT);
+        
+        // Add to undo system
+        AddUndoActionCharacter(ACTION_CHARACTER_PASTE, charIndex, oldData, newData);
         
         // Update status
         if (g_hStatusBar) {
@@ -756,4 +812,246 @@ void DrawThemedBackground(HDC hdc, RECT* rect, int partId, int stateId)
     
     // Use themed background drawing
     DrawThemeBackground(g_hTheme, hdc, partId, stateId, rect, NULL);
+}
+
+// Undo/Redo System Implementation
+void InitializeUndoSystem()
+{
+    g_undoSystem.currentIndex = -1;
+    g_undoSystem.actionCount = 0;
+    memset(g_undoSystem.actions, 0, sizeof(g_undoSystem.actions));
+}
+
+void AddUndoAction(UndoActionType type, int charIndex, int pixelX, int pixelY, BOOL oldValue, BOOL newValue)
+{
+    // If we're not at the end of the undo stack, clear everything after current position
+    if (g_undoSystem.currentIndex < g_undoSystem.actionCount - 1) {
+        g_undoSystem.actionCount = g_undoSystem.currentIndex + 1;
+    }
+    
+    // If we're at max capacity, shift everything left
+    if (g_undoSystem.actionCount >= MAX_UNDO_LEVELS) {
+        for (int i = 0; i < MAX_UNDO_LEVELS - 1; i++) {
+            g_undoSystem.actions[i] = g_undoSystem.actions[i + 1];
+        }
+        g_undoSystem.actionCount = MAX_UNDO_LEVELS - 1;
+        g_undoSystem.currentIndex = g_undoSystem.actionCount - 1;
+    }
+    
+    // Add new action
+    UndoAction* action = &g_undoSystem.actions[g_undoSystem.actionCount];
+    action->type = type;
+    action->charIndex = charIndex;
+    action->pixelX = pixelX;
+    action->pixelY = pixelY;
+    action->oldPixelValue = oldValue;
+    action->newPixelValue = newValue;
+    
+    // Store character data for character-level operations
+    if (type == ACTION_PIXEL_CHANGE) {
+        memcpy(action->oldData, g_font.data[charIndex], VGA_CHAR_HEIGHT);
+        // Calculate new data without actually applying yet
+        memcpy(action->newData, action->oldData, VGA_CHAR_HEIGHT);
+        // Apply pixel change to new data
+        unsigned char mask = 1 << (7 - pixelX);
+        if (newValue) {
+            action->newData[pixelY] |= mask;
+        } else {
+            action->newData[pixelY] &= ~mask;
+        }
+    }
+    
+    g_undoSystem.actionCount++;
+    g_undoSystem.currentIndex++;
+    
+    SetFontModified(TRUE);
+    UpdateUndoRedoButtons();
+}
+
+void AddUndoActionCharacter(UndoActionType type, int charIndex, unsigned char* oldData, unsigned char* newData)
+{
+    // If we're not at the end of the undo stack, clear everything after current position
+    if (g_undoSystem.currentIndex < g_undoSystem.actionCount - 1) {
+        g_undoSystem.actionCount = g_undoSystem.currentIndex + 1;
+    }
+    
+    // If we're at max capacity, shift everything left
+    if (g_undoSystem.actionCount >= MAX_UNDO_LEVELS) {
+        for (int i = 0; i < MAX_UNDO_LEVELS - 1; i++) {
+            g_undoSystem.actions[i] = g_undoSystem.actions[i + 1];
+        }
+        g_undoSystem.actionCount = MAX_UNDO_LEVELS - 1;
+        g_undoSystem.currentIndex = g_undoSystem.actionCount - 1;
+    }
+    
+    // Add new action
+    UndoAction* action = &g_undoSystem.actions[g_undoSystem.actionCount];
+    action->type = type;
+    action->charIndex = charIndex;
+    action->pixelX = -1; // Not applicable for character operations
+    action->pixelY = -1;
+    action->oldPixelValue = FALSE;
+    action->newPixelValue = FALSE;
+    
+    if (oldData) {
+        memcpy(action->oldData, oldData, VGA_CHAR_HEIGHT);
+    }
+    if (newData) {
+        memcpy(action->newData, newData, VGA_CHAR_HEIGHT);
+    }
+    
+    g_undoSystem.actionCount++;
+    g_undoSystem.currentIndex++;
+    
+    SetFontModified(TRUE);
+    UpdateUndoRedoButtons();
+}
+
+BOOL CanUndo()
+{
+    return g_undoSystem.currentIndex >= 0;
+}
+
+BOOL CanRedo()
+{
+    return g_undoSystem.currentIndex < g_undoSystem.actionCount - 1;
+}
+
+void PerformUndo()
+{
+    if (!CanUndo()) return;
+    
+    UndoAction* action = &g_undoSystem.actions[g_undoSystem.currentIndex];
+    
+    switch (action->type) {
+        case ACTION_PIXEL_CHANGE:
+            memcpy(g_font.data[action->charIndex], action->oldData, VGA_CHAR_HEIGHT);
+            break;
+            
+        case ACTION_CHARACTER_CLEAR:
+        case ACTION_CHARACTER_PASTE:
+            memcpy(g_font.data[action->charIndex], action->oldData, VGA_CHAR_HEIGHT);
+            break;
+    }
+    
+    g_undoSystem.currentIndex--;
+    
+    // Refresh display
+    InvalidateRect(g_hCharGrid, NULL, FALSE);
+    InvalidateRect(g_hPixelEditor, NULL, FALSE);
+    UpdateUndoRedoButtons();
+    UpdateStatusBar();
+}
+
+void PerformRedo()
+{
+    if (!CanRedo()) return;
+    
+    g_undoSystem.currentIndex++;
+    UndoAction* action = &g_undoSystem.actions[g_undoSystem.currentIndex];
+    
+    switch (action->type) {
+        case ACTION_PIXEL_CHANGE:
+            memcpy(g_font.data[action->charIndex], action->newData, VGA_CHAR_HEIGHT);
+            break;
+            
+        case ACTION_CHARACTER_CLEAR:
+        case ACTION_CHARACTER_PASTE:
+            memcpy(g_font.data[action->charIndex], action->newData, VGA_CHAR_HEIGHT);
+            break;
+    }
+    
+    // Refresh display
+    InvalidateRect(g_hCharGrid, NULL, FALSE);
+    InvalidateRect(g_hPixelEditor, NULL, FALSE);
+    UpdateUndoRedoButtons();
+    UpdateStatusBar();
+}
+
+void UpdateUndoRedoButtons()
+{
+    if (g_hToolbar) {
+        // Enable/disable undo button
+        SendMessage(g_hToolbar, TB_ENABLEBUTTON, ID_EDIT_UNDO, MAKELPARAM(CanUndo(), 0));
+        
+        // Enable/disable redo button
+        SendMessage(g_hToolbar, TB_ENABLEBUTTON, ID_EDIT_REDO, MAKELPARAM(CanRedo(), 0));
+    }
+}
+
+// File change tracking functions
+void SetFontModified(BOOL modified)
+{
+    g_fontModified = modified;
+    UpdateWindowTitle();
+}
+
+BOOL IsFontModified()
+{
+    return g_fontModified;
+}
+
+BOOL PromptSaveChanges()
+{
+    if (!g_fontModified) {
+        return TRUE; // No changes to save
+    }
+    
+    char message[512];
+    if (strlen(g_currentFilename) > 0) {
+        const char* nameOnly = strrchr(g_currentFilename, '\\');
+        if (nameOnly) {
+            nameOnly++; // Skip the backslash
+        } else {
+            nameOnly = g_currentFilename;
+        }
+        sprintf(message, "Font '%s' has been modified.\n\nDo you want to save your changes?", nameOnly);
+    } else {
+        sprintf(message, "The current font has been modified.\n\nDo you want to save your changes?");
+    }
+    
+    int result = MessageBox(g_hMainWindow, message, "Save Changes?", 
+                           MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON1);
+    
+    if (result == IDYES) {
+        // Try to save the file
+        if (strlen(g_currentFilename) > 0) {
+            // Save to current file
+            if (SaveVGAFont(&g_font, g_currentFilename)) {
+                SetFontModified(FALSE);
+                return TRUE;
+            } else {
+                MessageBox(g_hMainWindow, "Failed to save font file!", "Save Error", MB_OK | MB_ICONERROR);
+                return FALSE;
+            }
+        } else {
+            // Show save dialog
+            SendMessage(g_hMainWindow, WM_COMMAND, ID_FILE_SAVE, 0);
+            // Return based on whether save was successful (check if still modified)
+            return !g_fontModified;
+        }
+    } else if (result == IDNO) {
+        return TRUE; // Don't save, but continue
+    } else {
+        return FALSE; // Cancel
+    }
+}
+
+void UpdateWindowTitle()
+{
+    char title[512];
+    if (strlen(g_currentFilename) > 0) {
+        const char* nameOnly = strrchr(g_currentFilename, '\\');
+        if (nameOnly) {
+            nameOnly++; // Skip the backslash
+        } else {
+            nameOnly = g_currentFilename;
+        }
+        sprintf(title, "%s%s - VGA Font Editor - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
+                nameOnly, g_fontModified ? "*" : "");
+    } else {
+        sprintf(title, "%sUntitled - VGA Font Editor - Copyright (c) 2025 Erdem Ersoy (eersoy93)", 
+                g_fontModified ? "*" : "");
+    }
+    SetWindowText(g_hMainWindow, title);
 }
