@@ -1,5 +1,7 @@
 # VGA Font Editor
 
+![VGA Font Editor 0.1.0](0_1_0.png)
+
 A modern VGA text mode font editor for Windows, written in C using Windows API. Written with Cursor AI.
 
 ## Features
